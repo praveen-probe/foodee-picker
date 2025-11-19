@@ -9,6 +9,7 @@
 
 import {setGlobalOptions} from "firebase-functions/v2";
 import {onDocumentUpdated} from "firebase-functions/v2/firestore";
+import {onCall, HttpsError} from "firebase-functions/v2/https";
 import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
 
@@ -36,6 +37,7 @@ type GeoPoint = {lat: number; lng: number};
 const TARGET_COORDINATES: GeoPoint = {lat: 13.0674, lng: 80.2376};
 const MAX_DISTANCE_METERS = 300;
 const EARTH_RADIUS_METERS = 6371000;
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const toRadians = (deg: number): number => (deg * Math.PI) / 180;
 
@@ -144,5 +146,140 @@ export const notifyUserNearLocation = onDocumentUpdated(
       doc: event.document,
       distance,
     });
+
+    const now = admin.firestore.Timestamp.now();
+    const normalizeTimestamp = (
+      value: unknown,
+    ): admin.firestore.Timestamp | null => {
+      if (value instanceof admin.firestore.Timestamp) {
+        return value;
+      }
+      if (
+        value &&
+        typeof value === "object" &&
+        typeof (value as {seconds?: number}).seconds === "number"
+      ) {
+        return new admin.firestore.Timestamp(
+          (value as {seconds: number; nanoseconds?: number}).seconds,
+          (value as {seconds: number; nanoseconds?: number}).nanoseconds ?? 0,
+        );
+      }
+      if (typeof value === "number") {
+        return admin.firestore.Timestamp.fromMillis(value);
+      }
+      return null;
+    };
+
+    const recentEntriesRaw = Array.isArray(after.recentEntries)
+      ? after.recentEntries
+      : [];
+    const filteredEntries = recentEntriesRaw
+      .map((entry) => normalizeTimestamp(entry))
+      .filter(
+        (entry): entry is admin.firestore.Timestamp =>
+          !!entry && now.toMillis() - entry.toMillis() <= SEVEN_DAYS_MS,
+      );
+    filteredEntries.push(now);
+
+    const db = admin.firestore();
+    const userRef = db.doc(event.document);
+    await userRef.update({recentEntries: filteredEntries});
+
+    if (filteredEntries.length >= 3) {
+      const ownerRef = userRef.parent.parent;
+      if (!ownerRef) {
+        logger.warn("Unable to resolve owner reference for", event.document);
+        return;
+      }
+      const regularRef = ownerRef
+        .collection("regularUsers")
+        .doc(event.params.uid);
+      const payload = {
+        ...after,
+        recentEntries: filteredEntries,
+        becameRegularAt: now,
+      };
+      await regularRef.set(payload);
+      await userRef.delete();
+      logger.info("Promoted user to regulars", {
+        doc: event.document,
+        entriesThisWeek: filteredEntries.length,
+      });
+    }
   },
 );
+
+export const sendManualMessage = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Owner must be signed in.");
+  }
+
+  const ownerId = (request.data?.ownerId ?? "").toString().trim();
+  const message = (request.data?.message ?? "").toString().trim();
+  const includeRegular: boolean =
+    request.data?.includeRegularUsers !== false;
+
+  if (!ownerId) {
+    throw new HttpsError("invalid-argument", "ownerId is required.");
+  }
+  if (!message) {
+    throw new HttpsError("invalid-argument", "Message body is required.");
+  }
+
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+
+  const [usersSnap, regularSnap] = await Promise.all([
+    ownerRef.collection("users").get(),
+    includeRegular ? ownerRef.collection("regularUsers").get() : null,
+  ]);
+
+  const tokens = new Set<string>();
+  const collectTokens = (snapshot: FirebaseFirestore.QuerySnapshot | null) => {
+    snapshot?.forEach((doc) => {
+      const token = resolveFcmToken(doc.data());
+      if (token) tokens.add(token);
+    });
+  };
+
+  collectTokens(usersSnap);
+  collectTokens(regularSnap);
+
+  if (!tokens.size) {
+    logger.info("sendManualMessage skipped; no tokens for owner", {ownerId});
+    return {successCount: 0, failureCount: 0, totalTokens: 0};
+  }
+
+  const tokenList = Array.from(tokens);
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let i = 0; i < tokenList.length; i += 500) {
+    const batch = tokenList.slice(i, i + 500);
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens: batch,
+      notification: {
+        title: "Foodee Picker",
+        body: message,
+      },
+      data: {
+        ownerId,
+        manual: "true",
+      },
+    });
+    successCount += response.successCount;
+    failureCount += response.failureCount;
+  }
+
+  logger.info("sendManualMessage delivered", {
+    ownerId,
+    successCount,
+    failureCount,
+  });
+
+  return {
+    successCount,
+    failureCount,
+    totalTokens: tokenList.length,
+  };
+});

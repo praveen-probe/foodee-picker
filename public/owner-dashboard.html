@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Foodee Picker · Owner Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --background: #0f172a;
+        --card: #141c2f;
+        --surface: #1e293b;
+        --accent: #ffb347;
+        --accent-strong: #ff914d;
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --danger: #f87171;
+        --success: #4ade80;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: linear-gradient(135deg, #0f172a, #151835 45%, #1e1c2d);
+        min-height: 100vh;
+        color: var(--text);
+        padding: 2rem 1rem 4rem;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-weight: 600;
+      }
+      .shell {
+        max-width: 1100px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      header p {
+        color: var(--muted);
+        margin: 0;
+      }
+      .card {
+        background: rgba(20, 28, 47, 0.75);
+        border: 1px solid rgba(148, 163, 184, 0.1);
+        border-radius: 1.5rem;
+        padding: 1.75rem;
+        backdrop-filter: blur(14px);
+        box-shadow: 0 20px 50px rgba(3, 7, 18, 0.45);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1.25rem;
+      }
+      label {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin-bottom: 0.35rem;
+        color: var(--muted);
+      }
+      input,
+      textarea {
+        width: 100%;
+        border-radius: 1rem;
+        border: 1px solid rgba(148, 163, 184, 0.2);
+        background: rgba(15, 23, 42, 0.65);
+        color: var(--text);
+        padding: 0.95rem 1.1rem;
+        font-size: 1rem;
+        transition: border 0.2s ease, box-shadow 0.2s ease;
+      }
+      textarea {
+        resize: vertical;
+        min-height: 110px;
+      }
+      input:focus,
+      textarea:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(255, 179, 71, 0.2);
+      }
+      button {
+        appearance: none;
+        border: none;
+        border-radius: 999px;
+        background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+        color: #0f172a;
+        font-weight: 600;
+        font-size: 1rem;
+        padding: 0.95rem 1.4rem;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      button:not(:disabled):hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 25px rgba(255, 179, 71, 0.35);
+      }
+      .login-status {
+        margin-top: 0.75rem;
+        font-size: 0.95rem;
+        color: var(--danger);
+      }
+      .dashboard {
+        display: none;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+      }
+      .stat-card {
+        background: rgba(15, 23, 42, 0.75);
+        border-radius: 1.25rem;
+        padding: 1.25rem;
+        border: 1px solid rgba(148, 163, 184, 0.1);
+      }
+      .stat-card span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.4rem;
+      }
+      .stat-card strong {
+        font-size: 1.7rem;
+      }
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+        margin-top: 1rem;
+      }
+      .list-item {
+        border-radius: 1rem;
+        padding: 1rem 1.25rem;
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        background: rgba(14, 23, 43, 0.8);
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: center;
+      }
+      .user-meta {
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+      }
+      .user-meta small {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .badge {
+        font-size: 0.85rem;
+        font-weight: 600;
+        padding: 0.3rem 0.85rem;
+        border-radius: 999px;
+      }
+      .badge.in {
+        color: #052e16;
+        background: rgba(74, 222, 128, 0.9);
+      }
+      .badge.out {
+        color: #7c2d12;
+        background: rgba(251, 146, 60, 0.85);
+      }
+      .badge.regular {
+        color: #111827;
+        background: rgba(191, 219, 254, 0.9);
+      }
+      .message-status {
+        margin-top: 0.6rem;
+        min-height: 1.1rem;
+        color: var(--muted);
+      }
+      @media (max-width: 640px) {
+        body {
+          padding: 1.25rem 0.75rem 3rem;
+        }
+        .card {
+          padding: 1.35rem;
+        }
+        .list-item {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        button {
+          width: 100%;
+          justify-content: center;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <h1>Foodee Picker · Owner</h1>
+        <p>Monitor who joined nearby, and reach out instantly.</p>
+      </header>
+
+      <section class="card">
+        <form id="loginForm" class="grid">
+          <div>
+            <label for="ownerId">Owner ID</label>
+            <input
+              id="ownerId"
+              name="ownerId"
+              type="text"
+              value="demoOwner"
+              autocomplete="organization"
+            />
+          </div>
+
+          <div>
+            <label for="ownerEmail">Email</label>
+            <input
+              id="ownerEmail"
+              name="ownerEmail"
+              type="email"
+              placeholder="owner@example.com"
+              autocomplete="email"
+              required
+            />
+          </div>
+
+          <div>
+            <label for="ownerPassword">Password</label>
+            <input
+              id="ownerPassword"
+              name="ownerPassword"
+              type="password"
+              placeholder="••••••••"
+              autocomplete="current-password"
+              required
+            />
+          </div>
+
+          <div style="display: flex; align-items: flex-end">
+            <button type="submit" id="loginButton">Sign in</button>
+          </div>
+        </form>
+        <p class="login-status" id="loginStatus" role="status"></p>
+      </section>
+
+      <section class="dashboard" id="dashboard">
+        <div class="stats">
+          <div class="stat-card">
+            <span>Active guests</span>
+            <strong id="activeCount">0</strong>
+          </div>
+          <div class="stat-card">
+            <span>Regular guests</span>
+            <strong id="regularCount">0</strong>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; gap: 1rem">
+            <h2>Active guests</h2>
+            <button type="button" id="refreshGuests">Refresh</button>
+          </div>
+          <div class="list" id="userList"></div>
+        </div>
+
+        <div class="card">
+          <h2>Regulars</h2>
+          <div class="list" id="regularList"></div>
+        </div>
+
+        <div class="card">
+          <h2>Send message</h2>
+          <form id="messageForm">
+            <label for="messageInput">Message body</label>
+            <textarea
+              id="messageInput"
+              placeholder="What would you like to share with everyone?"
+              required
+            ></textarea>
+            <button type="submit" id="sendMessageBtn">Send push notification</button>
+            <p class="message-status" id="messageStatus"></p>
+          </form>
+        </div>
+      </section>
+    </div>
+
+    <script src="./firebase-config.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
+    <script src="./owner-dashboard.js"></script>
+  </body>
+</html>
