@@ -10,6 +10,7 @@
   const passwordInput = document.getElementById("ownerPassword");
 
   const dashboard = document.getElementById("dashboard");
+  const subscriptionPlanEl = document.getElementById("subscriptionPlan");
   const activeCountEl = document.getElementById("activeCount");
   const regularCountEl = document.getElementById("regularCount");
   const userListEl = document.getElementById("userList");
@@ -145,6 +146,19 @@
   const updateLists = () => {
     activeCountEl.textContent = activeUsers.length.toString();
     regularCountEl.textContent = regularUsers.length.toString();
+
+    const planText = subscriptionPlanEl.textContent.toLowerCase();
+    const isFree = planText === "free";
+    const userCount = activeUsers.length;
+    const limit = 100;
+
+    if (isFree && userCount >= limit) {
+      activeCountEl.textContent = `${userCount} / ${limit} (LIMIT)`;
+      activeCountEl.style.color = "var(--danger)";
+    } else {
+      activeCountEl.style.color = "";
+    }
+
     renderList(userListEl, activeUsers, {
       emptyLabel: "No active guests yet.",
     });
@@ -165,6 +179,26 @@
     updateLists();
 
     const ownerRef = db.collection("owners").doc(ownerId);
+
+    ownerRef.onSnapshot(
+      (snapshot) => {
+        const data = snapshot.data();
+        const plan = (data?.subscriptionPlan || "free").toUpperCase();
+        subscriptionPlanEl.textContent = plan;
+        const isPremium = plan === "PREMIUM";
+        sendMessageBtn.disabled = !isPremium;
+        if (!isPremium) {
+          messageInput.placeholder =
+            "Upgrade to premium to send messages to users.";
+        } else {
+          messageInput.placeholder =
+            "What would you like to share with everyone?";
+        }
+      },
+      (error) => {
+        console.error("Owner subscription error", error);
+      }
+    );
 
     unsubscribeActive = ownerRef.collection("users").onSnapshot(
       (snapshot) => {

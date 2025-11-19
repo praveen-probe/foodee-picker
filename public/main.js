@@ -20,6 +20,7 @@
   firebase.auth().useDeviceLanguage();
   const auth = firebase.auth();
   const db = firebase.firestore();
+  const functions = firebase.functions();
 
   let confirmationResult = null;
 
@@ -138,6 +139,16 @@
       const result = await confirmationResult.confirm(code);
       const { uid } = result.user;
 
+      const ownerId = "demoOwner";
+
+      const checkUserLimit = functions.httpsCallable("checkUserLimit");
+      const limitCheck = await checkUserLimit({ ownerId });
+      if (!limitCheck.data.allowed) {
+        throw new Error(
+          `Owner has reached the user limit (${limitCheck.data.current}/${limitCheck.data.limit}). Please contact the owner for premium access.`
+        );
+      }
+
       setStatus("Please allow location access to finish joining.");
       let location;
       try {
@@ -151,7 +162,7 @@
 
       await db
         .collection("owners")
-        .doc("demoOwner")
+        .doc(ownerId)
         .collection("users")
         .doc(uid)
         .set(

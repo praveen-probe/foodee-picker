@@ -209,6 +209,17 @@ export const notifyUserNearLocation = onDocumentUpdated(
   },
 );
 
+const isBossAdmin = (email: string | undefined | null): boolean => {
+  if (!email) return false;
+  const normalized = email.toLowerCase().trim();
+  return (
+    normalized === "boss@foodeepicker.com" ||
+    normalized.endsWith("@foodeepicker.com")
+  );
+};
+
+const FREE_PLAN_USER_LIMIT = 100;
+
 export const sendManualMessage = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "Owner must be signed in.");
@@ -228,6 +239,29 @@ export const sendManualMessage = onCall(async (request) => {
 
   const db = admin.firestore();
   const ownerRef = db.collection("owners").doc(ownerId);
+  const ownerDoc = await ownerRef.get();
+
+  if (!ownerDoc.exists) {
+    throw new HttpsError("not-found", "Owner not found.");
+  }
+
+  const ownerData = ownerDoc.data();
+  const subscriptionPlan = (ownerData?.subscriptionPlan || "free") as string;
+  const isActive = ownerData?.active !== false;
+
+  if (!isActive) {
+    throw new HttpsError(
+      "permission-denied",
+      "Owner account is deactivated."
+    );
+  }
+
+  if (subscriptionPlan === "free") {
+    throw new HttpsError(
+      "permission-denied",
+      "Manual messaging is not available on the free plan. Upgrade to premium to send messages."
+    );
+  }
 
   const [usersSnap, regularSnap] = await Promise.all([
     ownerRef.collection("users").get(),
@@ -282,4 +316,161 @@ export const sendManualMessage = onCall(async (request) => {
     failureCount,
     totalTokens: tokenList.length,
   };
+});
+
+export const checkUserLimit = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Must be signed in.");
+  }
+
+  const ownerId = (request.data?.ownerId ?? "").toString().trim();
+  if (!ownerId) {
+    throw new HttpsError("invalid-argument", "ownerId is required.");
+  }
+
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+  const ownerDoc = await ownerRef.get();
+
+  if (!ownerDoc.exists) {
+    throw new HttpsError("not-found", "Owner not found.");
+  }
+
+  const ownerData = ownerDoc.data();
+  const subscriptionPlan = (ownerData?.subscriptionPlan || "free") as string;
+
+  if (subscriptionPlan === "premium") {
+    return { allowed: true, current: 0, limit: Infinity };
+  }
+
+  const usersSnap = await ownerRef.collection("users").get();
+  const currentCount = usersSnap.size;
+
+  if (currentCount >= FREE_PLAN_USER_LIMIT) {
+    return {
+      allowed: false,
+      current: currentCount,
+      limit: FREE_PLAN_USER_LIMIT,
+    };
+  }
+
+  return {
+    allowed: true,
+    current: currentCount,
+    limit: FREE_PLAN_USER_LIMIT,
+  };
+});
+
+export const updateOwnerSubscription = onCall(async (request) => {
+  if (!request.auth || !isBossAdmin(request.auth.token.email)) {
+    throw new HttpsError(
+      "permission-denied",
+      "Only boss admin can update subscriptions."
+    );
+  }
+
+  const ownerId = (request.data?.ownerId ?? "").toString().trim();
+  const subscriptionPlan = (request.data?.subscriptionPlan ?? "").toString()
+    .trim()
+    .toLowerCase();
+
+  if (!ownerId) {
+    throw new HttpsError("invalid-argument", "ownerId is required.");
+  }
+
+  if (subscriptionPlan !== "free" && subscriptionPlan !== "premium") {
+    throw new HttpsError(
+      "invalid-argument",
+      "subscriptionPlan must be 'free' or 'premium'."
+    );
+  }
+
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+  const ownerDoc = await ownerRef.get();
+
+  if (!ownerDoc.exists) {
+    throw new HttpsError("not-found", "Owner not found.");
+  }
+
+  await ownerRef.update({
+    subscriptionPlan,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  logger.info("Updated owner subscription", { ownerId, subscriptionPlan });
+
+  return { success: true, ownerId, subscriptionPlan };
+});
+
+export const toggleOwnerStatus = onCall(async (request) => {
+  if (!request.auth || !isBossAdmin(request.auth.token.email)) {
+    throw new HttpsError(
+      "permission-denied",
+      "Only boss admin can toggle owner status."
+    );
+  }
+
+  const ownerId = (request.data?.ownerId ?? "").toString().trim();
+  const active = request.data?.active === true;
+
+  if (!ownerId) {
+    throw new HttpsError("invalid-argument", "ownerId is required.");
+  }
+
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+  const ownerDoc = await ownerRef.get();
+
+  if (!ownerDoc.exists) {
+    throw new HttpsError("not-found", "Owner not found.");
+  }
+
+  await ownerRef.update({
+    active,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  logger.info("Toggled owner status", { ownerId, active });
+
+  return { success: true, ownerId, active };
+});
+
+export const deleteOwner = onCall(async (request) => {
+  if (!request.auth || !isBossAdmin(request.auth.token.email)) {
+    throw new HttpsError(
+      "permission-denied",
+      "Only boss admin can delete owners."
+    );
+  }
+
+  const ownerId = (request.data?.ownerId ?? "").toString().trim();
+  if (!ownerId) {
+    throw new HttpsError("invalid-argument", "ownerId is required.");
+  }
+
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+  const ownerDoc = await ownerRef.get();
+
+  if (!ownerDoc.exists) {
+    throw new HttpsError("not-found", "Owner not found.");
+  }
+
+  const batch = db.batch();
+
+  const [usersSnap, regularSnap] = await Promise.all([
+    ownerRef.collection("users").get(),
+    ownerRef.collection("regularUsers").get(),
+  ]);
+
+  usersSnap.forEach((doc) => batch.delete(doc.ref));
+  regularSnap.forEach((doc) => batch.delete(doc.ref));
+  batch.delete(ownerRef);
+
+  await batch.commit();
+
+  logger.info("Deleted owner and all subcollections", { ownerId });
+
+  return { success: true, ownerId };
 });

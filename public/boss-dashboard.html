@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Foodee Picker · Boss Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --background: #0a0e1a;
+        --card: #111827;
+        --surface: #1f2937;
+        --accent: #ef4444;
+        --accent-strong: #dc2626;
+        --text: #f9fafb;
+        --muted: #9ca3af;
+        --success: #10b981;
+        --warning: #f59e0b;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: linear-gradient(135deg, #0a0e1a, #1a1f2e 50%, #0f172a);
+        min-height: 100vh;
+        color: var(--text);
+        padding: 2rem 1rem 4rem;
+      }
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        font-weight: 600;
+      }
+      .shell {
+        max-width: 1200px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      header p {
+        color: var(--muted);
+        margin: 0;
+      }
+      .card {
+        background: rgba(17, 24, 39, 0.85);
+        border: 1px solid rgba(156, 163, 175, 0.15);
+        border-radius: 1.5rem;
+        padding: 1.75rem;
+        backdrop-filter: blur(14px);
+        box-shadow: 0 20px 50px rgba(3, 7, 18, 0.5);
+      }
+      label {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin-bottom: 0.35rem;
+        color: var(--muted);
+      }
+      input {
+        width: 100%;
+        border-radius: 1rem;
+        border: 1px solid rgba(156, 163, 175, 0.2);
+        background: rgba(15, 23, 42, 0.65);
+        color: var(--text);
+        padding: 0.95rem 1.1rem;
+        font-size: 1rem;
+        transition: border 0.2s ease, box-shadow 0.2s ease;
+      }
+      input:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+      }
+      button {
+        appearance: none;
+        border: none;
+        border-radius: 999px;
+        background: linear-gradient(120deg, var(--accent), var(--accent-strong));
+        color: #ffffff;
+        font-weight: 600;
+        font-size: 1rem;
+        padding: 0.95rem 1.4rem;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      button:not(:disabled):hover {
+        transform: translateY(-1px);
+        box-shadow: 0 12px 25px rgba(239, 68, 68, 0.35);
+      }
+      button.secondary {
+        background: rgba(59, 130, 246, 0.8);
+        color: #ffffff;
+      }
+      button.secondary:hover {
+        background: rgba(59, 130, 246, 1);
+      }
+      button.danger {
+        background: rgba(239, 68, 68, 0.9);
+        color: #ffffff;
+      }
+      .login-status {
+        margin-top: 0.75rem;
+        font-size: 0.95rem;
+        color: var(--accent);
+      }
+      .dashboard {
+        display: none;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+      .list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.85rem;
+        margin-top: 1rem;
+      }
+      .list-item {
+        border-radius: 1rem;
+        padding: 1.25rem;
+        border: 1px solid rgba(156, 163, 175, 0.15);
+        background: rgba(15, 23, 42, 0.8);
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .owner-info {
+        display: flex;
+        flex-direction: column;
+        gap: 0.3rem;
+        flex: 1;
+        min-width: 200px;
+      }
+      .owner-info strong {
+        font-size: 1.1rem;
+      }
+      .owner-info small {
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .badge {
+        font-size: 0.8rem;
+        font-weight: 600;
+        padding: 0.35rem 0.9rem;
+        border-radius: 999px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .badge.free {
+        color: #78350f;
+        background: rgba(251, 191, 36, 0.9);
+      }
+      .badge.premium {
+        color: #064e3b;
+        background: rgba(16, 185, 129, 0.9);
+      }
+      .badge.inactive {
+        color: #7f1d1d;
+        background: rgba(248, 113, 113, 0.8);
+      }
+      .actions {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .actions button {
+        padding: 0.65rem 1.1rem;
+        font-size: 0.9rem;
+      }
+      select {
+        width: 100%;
+        border-radius: 1rem;
+        border: 1px solid rgba(156, 163, 175, 0.2);
+        background: rgba(15, 23, 42, 0.65);
+        color: var(--text);
+        padding: 0.95rem 1.1rem;
+        font-size: 1rem;
+        cursor: pointer;
+      }
+      select:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+      }
+      .stat-card {
+        background: rgba(15, 23, 42, 0.75);
+        border-radius: 1.25rem;
+        padding: 1.25rem;
+        border: 1px solid rgba(156, 163, 175, 0.1);
+      }
+      .stat-card span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 0.4rem;
+      }
+      .stat-card strong {
+        font-size: 1.7rem;
+      }
+      @media (max-width: 640px) {
+        body {
+          padding: 1.25rem 0.75rem 3rem;
+        }
+        .card {
+          padding: 1.35rem;
+        }
+        .list-item {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .actions {
+          width: 100%;
+        }
+        .actions button {
+          flex: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <h1>Foodee Picker · Boss Admin</h1>
+        <p>Manage owners, subscriptions, and platform settings.</p>
+      </header>
+
+      <section class="card">
+        <form id="loginForm">
+          <div style="display: grid; grid-template-columns: 1fr 1fr auto; gap: 1rem; align-items: end">
+            <div>
+              <label for="bossEmail">Boss Email</label>
+              <input
+                id="bossEmail"
+                name="bossEmail"
+                type="email"
+                placeholder="boss@foodeepicker.com"
+                autocomplete="email"
+                required
+              />
+            </div>
+
+            <div>
+              <label for="bossPassword">Password</label>
+              <input
+                id="bossPassword"
+                name="bossPassword"
+                type="password"
+                placeholder="••••••••"
+                autocomplete="current-password"
+                required
+              />
+            </div>
+
+            <div>
+              <button type="submit" id="loginButton">Sign in</button>
+            </div>
+          </div>
+        </form>
+        <p class="login-status" id="loginStatus" role="status"></p>
+      </section>
+
+      <section class="dashboard" id="dashboard">
+        <div class="stats">
+          <div class="stat-card">
+            <span>Total owners</span>
+            <strong id="totalOwners">0</strong>
+          </div>
+          <div class="stat-card">
+            <span>Premium owners</span>
+            <strong id="premiumOwners">0</strong>
+          </div>
+          <div class="stat-card">
+            <span>Free owners</span>
+            <strong id="freeOwners">0</strong>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem">
+            <h2>All owners</h2>
+            <button type="button" id="refreshOwners" class="secondary">Refresh</button>
+          </div>
+          <div class="list" id="ownerList"></div>
+        </div>
+      </section>
+    </div>
+
+    <script src="./firebase-config.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-functions-compat.js"></script>
+    <script src="./boss-dashboard.js"></script>
+  </body>
+</html>
+
