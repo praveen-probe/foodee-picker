@@ -59,6 +59,35 @@
     return trimmed;
   };
 
+  const requestLocation = () =>
+    new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        reject(new Error("This device does not support location services."));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          resolve({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          });
+        },
+        (error) => {
+          reject(
+            new Error(
+              error.message ||
+                "Location permission denied. Enable it to continue."
+            )
+          );
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        }
+      );
+    });
+
   joinForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     setStatus("", "info");
@@ -109,6 +138,17 @@
       const result = await confirmationResult.confirm(code);
       const { uid } = result.user;
 
+      setStatus("Please allow location access to finish joining.");
+      let location;
+      try {
+        location = await requestLocation();
+      } catch (geoError) {
+        throw new Error(
+          geoError.message ||
+            "Location permission is required to finish joining."
+        );
+      }
+
       await db
         .collection("owners")
         .doc("demoOwner")
@@ -120,6 +160,11 @@
             name: displayName,
             phone: phoneNumber,
             joinedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            location: {
+              lat: location.lat,
+              lng: location.lng,
+              timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+            },
           },
           { merge: true }
         );
