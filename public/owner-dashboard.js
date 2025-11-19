@@ -22,6 +22,21 @@
   const messageStatus = document.getElementById("messageStatus");
   const sendMessageBtn = document.getElementById("sendMessageBtn");
 
+  const aiModeToggle = document.getElementById("aiModeToggle");
+  const aiModeStatus = document.getElementById("aiModeStatus");
+
+  const scheduleForm = document.getElementById("scheduleForm");
+  const scheduleDateInput = document.getElementById("scheduleDate");
+  const scheduleTimeInput = document.getElementById("scheduleTime");
+  const scheduleTargetSelect = document.getElementById("scheduleTarget");
+  const scheduleMessageInput = document.getElementById("scheduleMessageInput");
+  const scheduleMessageBtn = document.getElementById("scheduleMessageBtn");
+  const scheduleStatus = document.getElementById("scheduleStatus");
+  const scheduledListEl = document.getElementById("scheduledList");
+
+  let unsubscribeScheduled = null;
+  let scheduledMessages = [];
+
   if (!window.firebaseConfig) {
     loginStatus.textContent =
       "Missing Firebase config. Update public/firebase-config.js.";
@@ -86,7 +101,9 @@
     if (!show) {
       activeUsers = [];
       regularUsers = [];
+      scheduledMessages = [];
       updateLists();
+      updateScheduledList();
     }
   };
 
@@ -194,6 +211,16 @@
           messageInput.placeholder =
             "What would you like to share with everyone?";
         }
+
+        const aiModeEnabled = data?.aiMode === true;
+        aiModeToggle.checked = aiModeEnabled;
+        if (aiModeEnabled) {
+          aiModeStatus.textContent = "AI Mode is active. Greetings will be sent automatically.";
+          aiModeStatus.style.color = "var(--success)";
+        } else {
+          aiModeStatus.textContent = "AI Mode is disabled.";
+          aiModeStatus.style.color = "var(--muted)";
+        }
       },
       (error) => {
         console.error("Owner subscription error", error);
@@ -229,6 +256,85 @@
           setLoginStatus(error.message || "Unable to load regulars.", "error");
         }
       );
+
+    if (unsubscribeScheduled) unsubscribeScheduled();
+    scheduledMessages = [];
+    updateScheduledList();
+
+    unsubscribeScheduled = ownerRef
+      .collection("scheduledMessages")
+      .where("status", "==", "pending")
+      .orderBy("scheduledAt", "asc")
+      .onSnapshot(
+        (snapshot) => {
+          scheduledMessages = snapshot.docs.map((doc) => ({
+            id: doc.id,
+            ...doc.data(),
+          }));
+          updateScheduledList();
+        },
+        (error) => {
+          console.error("Scheduled messages listener error", error);
+        }
+      );
+  };
+
+  const updateScheduledList = () => {
+    scheduledListEl.innerHTML = "";
+    if (!scheduledMessages.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "No scheduled messages.";
+      empty.style.color = "var(--muted)";
+      scheduledListEl.appendChild(empty);
+      return;
+    }
+
+    scheduledMessages.forEach((msg) => {
+      const card = document.createElement("div");
+      card.className = "list-item";
+
+      const info = document.createElement("div");
+      info.className = "user-meta";
+
+      const messageText = document.createElement("strong");
+      messageText.textContent = msg.message || "No message";
+      info.appendChild(messageText);
+
+      const timeText = document.createElement("small");
+      const scheduledAt = msg.scheduledAt?.toDate();
+      if (scheduledAt) {
+        timeText.textContent = `Scheduled for: ${scheduledAt.toLocaleString()} | Target: ${msg.target || "all"}`;
+      } else {
+        timeText.textContent = `Target: ${msg.target || "all"}`;
+      }
+      info.appendChild(timeText);
+
+      card.appendChild(info);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "danger";
+      deleteBtn.style.padding = "0.5rem 1rem";
+      deleteBtn.style.fontSize = "0.85rem";
+      deleteBtn.textContent = "Cancel";
+      deleteBtn.addEventListener("click", async () => {
+        if (!confirm("Cancel this scheduled message?")) return;
+        try {
+          const ownerId = currentOwnerId;
+          await db
+            .collection("owners")
+            .doc(ownerId)
+            .collection("scheduledMessages")
+            .doc(msg.id)
+            .delete();
+        } catch (error) {
+          console.error("Delete scheduled message failed", error);
+          setLoginStatus(error.message || "Could not cancel message.", "error");
+        }
+      });
+
+      card.appendChild(deleteBtn);
+      scheduledListEl.appendChild(card);
+    });
   };
 
   auth.onAuthStateChanged((user) => {
@@ -241,8 +347,10 @@
       toggleDashboard(false);
       if (unsubscribeActive) unsubscribeActive();
       if (unsubscribeRegular) unsubscribeRegular();
+      if (unsubscribeScheduled) unsubscribeScheduled();
       unsubscribeActive = null;
       unsubscribeRegular = null;
+      unsubscribeScheduled = null;
     }
   });
 
@@ -310,6 +418,118 @@
     } finally {
       sendMessageBtn.disabled = false;
       sendMessageBtn.textContent = "Send push notification";
+    }
+  });
+
+  aiModeToggle.addEventListener("change", async () => {
+    if (!auth.currentUser) {
+      aiModeToggle.checked = !aiModeToggle.checked;
+      aiModeStatus.textContent = "Sign in first to toggle AI Mode.";
+      aiModeStatus.style.color = "var(--danger)";
+      return;
+    }
+
+    const ownerId = ownerIdInput.value.trim();
+    const enabled = aiModeToggle.checked;
+
+    try {
+      aiModeStatus.textContent = "Updating...";
+      aiModeStatus.style.color = "var(--muted)";
+      await db.collection("owners").doc(ownerId).update({
+        aiMode: enabled,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      aiModeStatus.textContent = enabled
+        ? "AI Mode enabled successfully."
+        : "AI Mode disabled.";
+      aiModeStatus.style.color = "var(--success)";
+    } catch (error) {
+      console.error("Toggle AI mode failed", error);
+      aiModeToggle.checked = !enabled;
+      aiModeStatus.textContent = error.message || "Could not update AI Mode.";
+      aiModeStatus.style.color = "var(--danger)";
+    }
+  });
+
+  scheduleForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!auth.currentUser) {
+      scheduleStatus.textContent = "Sign in before scheduling messages.";
+      scheduleStatus.style.color = "var(--danger)";
+      return;
+    }
+
+    const ownerId = ownerIdInput.value.trim();
+    const date = scheduleDateInput.value;
+    const time = scheduleTimeInput.value;
+    const target = scheduleTargetSelect.value;
+    const message = scheduleMessageInput.value.trim();
+
+    if (!date || !time || !message) {
+      scheduleStatus.textContent = "Fill in all fields.";
+      scheduleStatus.style.color = "var(--danger)";
+      return;
+    }
+
+    const dateTime = new Date(`${date}T${time}`);
+    const now = new Date();
+    if (dateTime <= now) {
+      scheduleStatus.textContent = "Schedule time must be in the future.";
+      scheduleStatus.style.color = "var(--danger)";
+      return;
+    }
+
+    try {
+      scheduleMessageBtn.disabled = true;
+      scheduleMessageBtn.textContent = "Scheduling...";
+      scheduleStatus.textContent = "";
+      const scheduleMessage = functions.httpsCallable("scheduleMessage");
+      await scheduleMessage({
+        ownerId,
+        message,
+        target,
+        scheduledAt: firebase.firestore.Timestamp.fromDate(dateTime),
+      });
+      scheduleStatus.textContent = "Message scheduled successfully!";
+      scheduleStatus.style.color = "var(--success)";
+      scheduleForm.reset();
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      scheduleDateInput.value = tomorrow.toISOString().split("T")[0];
+    } catch (error) {
+      console.error("Schedule message failed", error);
+      scheduleStatus.textContent =
+        error.message || "Could not schedule message.";
+      scheduleStatus.style.color = "var(--danger)";
+    } finally {
+      scheduleMessageBtn.disabled = false;
+      scheduleMessageBtn.textContent = "Schedule message";
+    }
+  });
+
+  const setMinDate = () => {
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    scheduleDateInput.min = now.toISOString().split("T")[0];
+    if (!scheduleDateInput.value) {
+      scheduleDateInput.value = tomorrow.toISOString().split("T")[0];
+    }
+  };
+  setMinDate();
+  scheduleDateInput.addEventListener("change", () => {
+    const selectedDate = new Date(scheduleDateInput.value);
+    const now = new Date();
+    if (
+      selectedDate.toDateString() === now.toDateString() &&
+      scheduleTimeInput.value
+    ) {
+      const selectedTime = scheduleTimeInput.value.split(":");
+      const selectedDateTime = new Date();
+      selectedDateTime.setHours(parseInt(selectedTime[0]), parseInt(selectedTime[1]), 0);
+      if (selectedDateTime <= now) {
+        scheduleTimeInput.value = "";
+      }
     }
   });
 })();

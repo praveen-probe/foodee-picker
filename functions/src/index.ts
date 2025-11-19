@@ -10,6 +10,7 @@
 import {setGlobalOptions} from "firebase-functions/v2";
 import {onDocumentUpdated} from "firebase-functions/v2/firestore";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
+import {onSchedule} from "firebase-functions/v2/scheduler";
 import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
 
@@ -473,4 +474,467 @@ export const deleteOwner = onCall(async (request) => {
   logger.info("Deleted owner and all subcollections", { ownerId });
 
   return { success: true, ownerId };
+});
+
+export const scheduleMessage = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "Owner must be signed in.");
+  }
+
+  const ownerId = (request.data?.ownerId ?? "").toString().trim();
+  const message = (request.data?.message ?? "").toString().trim();
+  const target = (request.data?.target ?? "all").toString().trim();
+  const scheduledAt = request.data?.scheduledAt;
+
+  if (!ownerId) {
+    throw new HttpsError("invalid-argument", "ownerId is required.");
+  }
+  if (!message) {
+    throw new HttpsError("invalid-argument", "Message body is required.");
+  }
+  if (!scheduledAt) {
+    throw new HttpsError("invalid-argument", "scheduledAt is required.");
+  }
+
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+  const ownerDoc = await ownerRef.get();
+
+  if (!ownerDoc.exists) {
+    throw new HttpsError("not-found", "Owner not found.");
+  }
+
+  const ownerData = ownerDoc.data();
+  const subscriptionPlan = (ownerData?.subscriptionPlan || "free") as string;
+
+  if (subscriptionPlan === "free") {
+    throw new HttpsError(
+      "permission-denied",
+      "Scheduling messages is not available on the free plan. Upgrade to premium."
+    );
+  }
+
+  let scheduledTimestamp: admin.firestore.Timestamp;
+  if (scheduledAt instanceof admin.firestore.Timestamp) {
+    scheduledTimestamp = scheduledAt;
+  } else if (
+    scheduledAt &&
+    typeof scheduledAt === "object" &&
+    typeof (scheduledAt as {seconds?: number}).seconds === "number"
+  ) {
+    scheduledTimestamp = new admin.firestore.Timestamp(
+      (scheduledAt as {seconds: number; nanoseconds?: number}).seconds,
+      (scheduledAt as {seconds: number; nanoseconds?: number}).nanoseconds ?? 0,
+    );
+  } else {
+    throw new HttpsError("invalid-argument", "Invalid scheduledAt format.");
+  }
+
+  const now = admin.firestore.Timestamp.now();
+  if (scheduledTimestamp.toMillis() <= now.toMillis()) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Scheduled time must be in the future."
+    );
+  }
+
+  const validTargets = ["normal", "regular", "premium", "all"];
+  if (!validTargets.includes(target)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `Target must be one of: ${validTargets.join(", ")}`
+    );
+  }
+
+  const scheduledMessageRef = ownerRef.collection("scheduledMessages").doc();
+  await scheduledMessageRef.set({
+    ownerId,
+    message,
+    target,
+    scheduledAt: scheduledTimestamp,
+    status: "pending",
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  logger.info("Scheduled message created", {
+    ownerId,
+    messageId: scheduledMessageRef.id,
+    scheduledAt: scheduledTimestamp.toMillis(),
+  });
+
+  return {
+    success: true,
+    messageId: scheduledMessageRef.id,
+    scheduledAt: scheduledTimestamp.toMillis(),
+  };
+});
+
+const sendScheduledMessage = async (
+  ownerId: string,
+  message: string,
+  target: string,
+  messageId: string,
+): Promise<void> => {
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+
+  const tokens = new Set<string>();
+
+  if (target === "all" || target === "normal") {
+    const usersSnap = await ownerRef.collection("users").get();
+    usersSnap.forEach((doc) => {
+      const token = resolveFcmToken(doc.data());
+      if (token) tokens.add(token);
+    });
+  }
+
+  if (target === "all" || target === "regular") {
+    const regularSnap = await ownerRef.collection("regularUsers").get();
+    regularSnap.forEach((doc) => {
+      const token = resolveFcmToken(doc.data());
+      if (token) tokens.add(token);
+    });
+  }
+
+  if (target === "premium") {
+    const regularSnap = await ownerRef.collection("regularUsers").get();
+    regularSnap.forEach((doc) => {
+      const token = resolveFcmToken(doc.data());
+      if (token) tokens.add(token);
+    });
+  }
+
+  if (!tokens.size) {
+    logger.info("Scheduled message skipped; no tokens", { ownerId, messageId });
+    await ownerRef
+      .collection("scheduledMessages")
+      .doc(messageId)
+      .update({ status: "sent", sentAt: admin.firestore.FieldValue.serverTimestamp() });
+    return;
+  }
+
+  const tokenList = Array.from(tokens);
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let i = 0; i < tokenList.length; i += 500) {
+    const batch = tokenList.slice(i, i + 500);
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens: batch,
+      notification: {
+        title: "Foodee Picker",
+        body: message,
+      },
+      data: {
+        ownerId,
+        scheduled: "true",
+        messageId,
+      },
+    });
+    successCount += response.successCount;
+    failureCount += response.failureCount;
+  }
+
+  await ownerRef
+    .collection("scheduledMessages")
+    .doc(messageId)
+    .update({
+      status: "sent",
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      successCount,
+      failureCount,
+    });
+
+  logger.info("Scheduled message sent", {
+    ownerId,
+    messageId,
+    successCount,
+    failureCount,
+  });
+};
+
+export const checkScheduledMessages = onSchedule("every 1 minutes", async () => {
+  const db = admin.firestore();
+  const now = admin.firestore.Timestamp.now();
+
+  const ownersSnap = await db.collection("owners").get();
+
+  for (const ownerDoc of ownersSnap.docs) {
+    const ownerId = ownerDoc.id;
+    const ownerData = ownerDoc.data();
+
+    if (ownerData.active === false) {
+      continue;
+    }
+
+    const pendingSnap = await db
+      .collection("owners")
+      .doc(ownerId)
+      .collection("scheduledMessages")
+      .where("status", "==", "pending")
+      .where("scheduledAt", "<=", now)
+      .limit(10)
+      .get();
+
+    for (const msgDoc of pendingSnap.docs) {
+      const msgData = msgDoc.data();
+      try {
+        await sendScheduledMessage(
+          ownerId,
+          msgData.message as string,
+          msgData.target as string,
+          msgDoc.id,
+        );
+      } catch (error) {
+        logger.error("Failed to send scheduled message", {
+          ownerId,
+          messageId: msgDoc.id,
+          error,
+        });
+        await db
+          .collection("owners")
+          .doc(ownerId)
+          .collection("scheduledMessages")
+          .doc(msgDoc.id)
+          .update({
+            status: "failed",
+            error: (error as Error).message,
+          });
+      }
+    }
+  }
+});
+
+export const generateAIGreeting = onCall(async (request) => {
+  const ownerId = (request.data?.ownerId ?? "").toString().trim();
+  const timeOfDay = (request.data?.timeOfDay ?? "").toString().trim();
+
+  if (!ownerId) {
+    throw new HttpsError("invalid-argument", "ownerId is required.");
+  }
+
+  const validTimes = ["morning", "afternoon", "evening"];
+  if (!validTimes.includes(timeOfDay)) {
+    throw new HttpsError(
+      "invalid-argument",
+      `timeOfDay must be one of: ${validTimes.join(", ")}`
+    );
+  }
+
+  const db = admin.firestore();
+  const ownerRef = db.collection("owners").doc(ownerId);
+  const ownerDoc = await ownerRef.get();
+
+  if (!ownerDoc.exists) {
+    throw new HttpsError("not-found", "Owner not found.");
+  }
+
+  const ownerData = ownerDoc.data();
+  if (ownerData?.aiMode !== true) {
+    throw new HttpsError(
+      "permission-denied",
+      "AI Mode is not enabled for this owner."
+    );
+  }
+
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    logger.warn("OpenAI API key not configured; using fallback greeting");
+    const fallbackGreetings = {
+      morning: "Good morning! Start your day with great food from Foodee Picker! 🌅",
+      afternoon: "Good afternoon! Hope you're having a wonderful day. Check out our special offers! ☀️",
+      evening: "Good evening! Time to unwind with delicious food from Foodee Picker! 🌙",
+    };
+    return {
+      greeting: fallbackGreetings[timeOfDay as keyof typeof fallbackGreetings],
+      source: "fallback",
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a friendly assistant for Foodee Picker, a food delivery/pickup service. Generate warm, concise greetings (under 100 characters) appropriate for the time of day.",
+          },
+          {
+            role: "user",
+            content: `Generate a ${timeOfDay} greeting for Foodee Picker customers. Keep it friendly and brief.`,
+          },
+        ],
+        max_tokens: 100,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{message?: {content?: string}}>;
+    };
+    const greeting =
+      data.choices?.[0]?.message?.content?.trim() ||
+      `Good ${timeOfDay}! Enjoy Foodee Picker today!`;
+
+    return { greeting, source: "openai" };
+  } catch (error) {
+    logger.error("OpenAI greeting generation failed", { ownerId, error });
+    const fallbackGreetings = {
+      morning: "Good morning! Start your day with great food from Foodee Picker! 🌅",
+      afternoon: "Good afternoon! Hope you're having a wonderful day. Check out our special offers! ☀️",
+      evening: "Good evening! Time to unwind with delicious food from Foodee Picker! 🌙",
+    };
+    return {
+      greeting: fallbackGreetings[timeOfDay as keyof typeof fallbackGreetings],
+      source: "fallback",
+    };
+  }
+});
+
+const generateGreetingText = async (
+  timeOfDay: string,
+): Promise<string> => {
+  const openaiApiKey = process.env.OPENAI_API_KEY;
+  if (!openaiApiKey) {
+    logger.warn("OpenAI API key not configured; using fallback greeting");
+    const fallbackGreetings = {
+      morning: "Good morning! Start your day with great food from Foodee Picker! 🌅",
+      afternoon: "Good afternoon! Hope you're having a wonderful day. Check out our special offers! ☀️",
+      evening: "Good evening! Time to unwind with delicious food from Foodee Picker! 🌙",
+    };
+    return fallbackGreetings[timeOfDay as keyof typeof fallbackGreetings];
+  }
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openaiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a friendly assistant for Foodee Picker, a food delivery/pickup service. Generate warm, concise greetings (under 100 characters) appropriate for the time of day.",
+          },
+          {
+            role: "user",
+            content: `Generate a ${timeOfDay} greeting for Foodee Picker customers. Keep it friendly and brief.`,
+          },
+        ],
+        max_tokens: 100,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.statusText}`);
+    }
+
+    const data = (await response.json()) as {
+      choices?: Array<{message?: {content?: string}}>;
+    };
+    return (
+      data.choices?.[0]?.message?.content?.trim() ||
+      `Good ${timeOfDay}! Enjoy Foodee Picker today!`
+    );
+  } catch (error) {
+    logger.error("OpenAI greeting generation failed", { error });
+    const fallbackGreetings = {
+      morning: "Good morning! Start your day with great food from Foodee Picker! 🌅",
+      afternoon: "Good afternoon! Hope you're having a wonderful day. Check out our special offers! ☀️",
+      evening: "Good evening! Time to unwind with delicious food from Foodee Picker! 🌙",
+    };
+    return fallbackGreetings[timeOfDay as keyof typeof fallbackGreetings];
+  }
+};
+
+export const sendAIGreetings = onSchedule("0 8,14,19 * * *", async () => {
+  const db = admin.firestore();
+  const now = new Date();
+  const hour = now.getHours();
+
+  let timeOfDay: string;
+  if (hour >= 5 && hour < 12) {
+    timeOfDay = "morning";
+  } else if (hour >= 12 && hour < 17) {
+    timeOfDay = "afternoon";
+  } else {
+    timeOfDay = "evening";
+  }
+
+  const ownersSnap = await db
+    .collection("owners")
+    .where("aiMode", "==", true)
+    .where("active", "!=", false)
+    .get();
+
+  const greeting = await generateGreetingText(timeOfDay);
+
+  for (const ownerDoc of ownersSnap.docs) {
+    const ownerId = ownerDoc.id;
+    const ownerData = ownerDoc.data();
+
+    if (ownerData.active === false) {
+      continue;
+    }
+
+    try {
+      const [usersSnap, regularSnap] = await Promise.all([
+        db.collection("owners").doc(ownerId).collection("users").get(),
+        db.collection("owners").doc(ownerId).collection("regularUsers").get(),
+      ]);
+
+      const tokens = new Set<string>();
+      const collectTokens = (snapshot: FirebaseFirestore.QuerySnapshot) => {
+        snapshot.forEach((doc) => {
+          const token = resolveFcmToken(doc.data());
+          if (token) tokens.add(token);
+        });
+      };
+
+      collectTokens(usersSnap);
+      collectTokens(regularSnap);
+
+      if (!tokens.size) {
+        logger.info("No tokens for AI greeting", { ownerId });
+        continue;
+      }
+
+      const tokenList = Array.from(tokens);
+      for (let i = 0; i < tokenList.length; i += 500) {
+        const batch = tokenList.slice(i, i + 500);
+        await admin.messaging().sendEachForMulticast({
+          tokens: batch,
+          notification: {
+            title: "Foodee Picker",
+            body: greeting,
+          },
+          data: {
+            ownerId,
+            aiGreeting: "true",
+            timeOfDay,
+          },
+        });
+      }
+
+      logger.info("Sent AI greeting", { ownerId, timeOfDay });
+    } catch (error) {
+      logger.error("Failed to send AI greeting", { ownerId, error });
+    }
+  }
 });

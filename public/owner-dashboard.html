@@ -310,6 +310,73 @@
             <p class="message-status" id="messageStatus"></p>
           </form>
         </div>
+
+        <div class="card">
+          <h2>AI Mode</h2>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 1rem">
+            <div>
+              <p style="margin: 0; color: var(--muted); font-size: 0.9rem">
+                Automatically send AI-generated greetings at morning, afternoon, and evening.
+              </p>
+            </div>
+            <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer">
+              <input type="checkbox" id="aiModeToggle" style="width: auto; cursor: pointer" />
+              <span style="font-weight: 600">Enable AI Mode</span>
+            </label>
+          </div>
+          <p class="message-status" id="aiModeStatus"></p>
+        </div>
+
+        <div class="card">
+          <h2>Schedule message</h2>
+          <form id="scheduleForm">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem">
+              <div>
+                <label for="scheduleDate">Date</label>
+                <input
+                  id="scheduleDate"
+                  name="scheduleDate"
+                  type="date"
+                  required
+                />
+              </div>
+              <div>
+                <label for="scheduleTime">Time</label>
+                <input
+                  id="scheduleTime"
+                  name="scheduleTime"
+                  type="time"
+                  required
+                />
+              </div>
+            </div>
+            <div style="margin-top: 1rem">
+              <label for="scheduleTarget">Target audience</label>
+              <select id="scheduleTarget" name="scheduleTarget" required>
+                <option value="normal">Normal users only</option>
+                <option value="regular">Regular users only</option>
+                <option value="premium">Premium users only</option>
+                <option value="all">All users</option>
+              </select>
+            </div>
+            <div style="margin-top: 1rem">
+              <label for="scheduleMessageInput">Message body</label>
+              <textarea
+                id="scheduleMessageInput"
+                name="scheduleMessageInput"
+                placeholder="Message to send at scheduled time"
+                required
+              ></textarea>
+            </div>
+            <button type="submit" id="scheduleMessageBtn">Schedule message</button>
+            <p class="message-status" id="scheduleStatus"></p>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Scheduled messages</h2>
+          <div class="list" id="scheduledList"></div>
+        </div>
       </section>
     </div>
 
